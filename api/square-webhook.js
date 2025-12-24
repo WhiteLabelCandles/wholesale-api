@@ -23,9 +23,9 @@ export default async function handler(req, res) {
   }
 
   // Square Configuration
-  const SQUARE_ACCESS_TOKEN = 'EAAAl88RT89hR2JoGQVUqZA5QjpjDWt62tmQFv6Kp1qS0gwzvQegXpkwnW74oJLW'
-  const SQUARE_LOCATION_ID = '2AY43CKCRRKZA'
-  const SQUARE_ENVIRONMENT = 'sandbox'
+  const SQUARE_ACCESS_TOKEN = 'EAAAlwtO92oO9OtP9eWf3eCFdAGfCOXw2IJ3GkYY8dQ0tlusllELwhLxcM0Ge9EL'
+  const SQUARE_LOCATION_ID = '49XKD9QT7ANEC'
+  const SQUARE_ENVIRONMENT = 'production'
   
   const baseUrl = SQUARE_ENVIRONMENT === 'sandbox' 
     ? 'https://connect.squareupsandbox.com' 
