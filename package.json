@@ -1,0 +1,9 @@
+{
+  "name": "wholesale-api",
+  "version": "1.0.0",
+  "description": "Wholesale ordering API for White Label Candle Co",
+  "main": "api/square-webhook.js",
+  "dependencies": {
+    "node-fetch": "^2.6.1"
+  }
+}
