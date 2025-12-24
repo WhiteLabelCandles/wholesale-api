@@ -111,7 +111,7 @@ export default async function handler(req, res) {
           location_id: SQUARE_LOCATION_ID,
           customer_id: customerId,
           line_items: lineItems,
-          state: action === 'quote' ? 'OPEN' : 'PROPOSED',
+          state: 'OPEN',
           metadata: {
             order_type: action,
             reference_id: orderData.id,
