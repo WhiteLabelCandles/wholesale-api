@@ -1,5 +1,5 @@
 // Vercel Serverless Function - Square Invoice Creation
-// PRODUCTION READY - Uses environment variables from Vercel
+// PRODUCTION READY - With Debug Logging
 export default async function handler(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -28,12 +28,30 @@ export default async function handler(req, res) {
   const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID
   const SQUARE_ENVIRONMENT = process.env.SQUARE_ENVIRONMENT || 'production'
   
+  // DEBUG: Log what we received (without exposing full token)
+  console.log('=== ENVIRONMENT CHECK ===')
+  console.log('SQUARE_ACCESS_TOKEN exists:', !!SQUARE_ACCESS_TOKEN)
+  console.log('SQUARE_ACCESS_TOKEN length:', SQUARE_ACCESS_TOKEN ? SQUARE_ACCESS_TOKEN.length : 0)
+  console.log('SQUARE_ACCESS_TOKEN starts with:', SQUARE_ACCESS_TOKEN ? SQUARE_ACCESS_TOKEN.substring(0, 10) : 'MISSING')
+  console.log('SQUARE_LOCATION_ID exists:', !!SQUARE_LOCATION_ID)
+  console.log('SQUARE_LOCATION_ID value:', SQUARE_LOCATION_ID || 'MISSING')
+  console.log('SQUARE_ENVIRONMENT:', SQUARE_ENVIRONMENT)
+  console.log('All env vars:', Object.keys(process.env).filter(k => k.startsWith('SQUARE')))
+  console.log('========================')
+  
   // Validate credentials exist
   if (!SQUARE_ACCESS_TOKEN || !SQUARE_LOCATION_ID) {
-    console.error('Missing Square credentials in environment variables')
+    console.error('❌ Missing Square credentials in environment variables')
+    console.error('ACCESS_TOKEN present:', !!SQUARE_ACCESS_TOKEN)
+    console.error('LOCATION_ID present:', !!SQUARE_LOCATION_ID)
     return res.status(500).json({ 
       success: false, 
-      error: 'Server configuration error - missing Square credentials' 
+      error: 'Server configuration error - missing Square credentials',
+      debug: {
+        hasAccessToken: !!SQUARE_ACCESS_TOKEN,
+        hasLocationId: !!SQUARE_LOCATION_ID,
+        environment: SQUARE_ENVIRONMENT
+      }
     })
   }
   
