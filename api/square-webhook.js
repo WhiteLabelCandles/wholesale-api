@@ -22,10 +22,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing required data' })
   }
 
-  // Square Configuration - UPDATE THESE WITH YOUR PRODUCTION VALUES
-  const SQUARE_ACCESS_TOKEN = 'EAAAlwtO92oO9OtP9eWf3eCFdAGfCOXw2IJ3GkYY8dQ0tlusllELwhLxcM0Ge9EL'
-  const SQUARE_LOCATION_ID = '49XKD9QT7ANEC'
+  // Square Configuration - UPDATE WITH YOUR PRODUCTION CREDENTIALS
+  const SQUARE_ACCESS_TOKEN = 'YOUR_PRODUCTION_ACCESS_TOKEN'
+  const SQUARE_LOCATION_ID = 'YOUR_PRODUCTION_LOCATION_ID'
   const SQUARE_ENVIRONMENT = 'production'
+  
   const baseUrl = SQUARE_ENVIRONMENT === 'sandbox' 
     ? 'https://connect.squareupsandbox.com' 
     : 'https://connect.squareup.com'
@@ -87,7 +88,7 @@ export default async function handler(req, res) {
 
     // 2. Create Invoice
     const lineItems = orderData.items.map((item, index) => ({
-      uid: `item-${index}`,
+      uid: `item-${index}-${Date.now()}`,
       name: `${item.product.charAt(0).toUpperCase() + item.product.slice(1)} - ${item.fragrance} (${item.size})`,
       quantity: String(item.quantity),
       item_type: 'ITEM',
@@ -97,10 +98,23 @@ export default async function handler(req, res) {
       }
     }))
 
+    // Calculate due date (14 days from now)
+    const dueDate = new Date()
+    dueDate.setDate(dueDate.getDate() + 14)
+    const dueDateString = dueDate.toISOString().split('T')[0]
+
     // Determine invoice title based on action type
     const invoiceTitle = action === 'quote' 
       ? `Wholesale Quote - ${orderData.id}` 
       : `Wholesale Order - ${orderData.id}`
+
+    const invoiceDescription = `Thank you for your wholesale ${action === 'quote' ? 'quote request' : 'order'}.
+
+Company: ${customerInfo.companyName}
+Contact: ${customerInfo.contactName}
+Reference: ${orderData.id}
+
+Please review the items below and proceed with payment when ready.`
 
     // Create invoice payload
     const invoicePayload = {
@@ -108,20 +122,25 @@ export default async function handler(req, res) {
       invoice: {
         location_id: SQUARE_LOCATION_ID,
         customer_id: customerId,
+        order: {
+          location_id: SQUARE_LOCATION_ID,
+          customer_id: customerId,
+          line_items: lineItems
+        },
         primary_recipient: {
           customer_id: customerId
         },
         payment_requests: [
           {
             request_type: 'BALANCE',
-            due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 14 days from now
+            due_date: dueDateString,
             automatic_payment_source: 'NONE'
           }
         ],
         delivery_method: 'EMAIL',
         invoice_number: orderData.id,
         title: invoiceTitle,
-        description: `Thank you for your wholesale ${action === 'quote' ? 'quote request' : 'order'}. Please review the items below.\n\nCompany: ${customerInfo.companyName}\nContact: ${customerInfo.contactName}`,
+        description: invoiceDescription,
         scheduled_at: new Date().toISOString(),
         accepted_payment_methods: {
           card: true,
@@ -132,27 +151,10 @@ export default async function handler(req, res) {
         },
         custom_fields: [
           {
-            label: 'Reference',
-            value: orderData.id
-          },
-          {
             label: 'Order Type',
             value: action === 'quote' ? 'Quote' : 'Order'
           }
         ]
-      },
-      fields_to_clear: []
-    }
-
-    // Add line items to order
-    invoicePayload.invoice.order = {
-      location_id: SQUARE_LOCATION_ID,
-      customer_id: customerId,
-      line_items: lineItems,
-      metadata: {
-        order_type: action,
-        reference_id: orderData.id,
-        company_name: customerInfo.companyName
       }
     }
 
@@ -174,6 +176,7 @@ export default async function handler(req, res) {
 
     const invoiceResult = await invoiceResponse.json()
     const invoiceId = invoiceResult.invoice.id
+    const invoiceVersion = invoiceResult.invoice.version
 
     // 3. Publish the invoice (this triggers Square to send the email)
     const publishResponse = await fetch(`${baseUrl}/v2/invoices/${invoiceId}/publish`, {
@@ -184,7 +187,7 @@ export default async function handler(req, res) {
         'Square-Version': '2024-12-18'
       },
       body: JSON.stringify({
-        version: invoiceResult.invoice.version,
+        version: invoiceVersion,
         idempotency_key: `pub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       })
     })
@@ -193,13 +196,16 @@ export default async function handler(req, res) {
       const errorData = await publishResponse.json()
       console.error('Failed to publish invoice:', errorData)
       // Don't throw - invoice was created, just not published
+    } else {
+      console.log('Invoice published successfully')
     }
 
     console.log('===== INVOICE CREATED =====')
     console.log('Invoice ID:', invoiceId)
     console.log('Customer:', customerInfo.companyName)
+    console.log('Email:', customerInfo.email)
     console.log('Total: £' + orderData.total.toFixed(2))
-    console.log('Square will email customer and you')
+    console.log('Square will email customer')
     console.log('==========================')
 
     return res.status(200).json({
@@ -207,8 +213,8 @@ export default async function handler(req, res) {
       invoiceId: invoiceId,
       customerId: customerId,
       message: action === 'quote' 
-        ? 'Quote invoice sent! Customer and you will receive email from Square.' 
-        : 'Order invoice sent! Customer and you will receive email from Square.'
+        ? 'Quote invoice created! Square will email the customer shortly.' 
+        : 'Order invoice created! Square will email the customer with payment link.'
     })
 
   } catch (error) {
