@@ -23,8 +23,8 @@ export default async function handler(req, res) {
   }
 
   // Square Configuration - UPDATE WITH YOUR PRODUCTION CREDENTIALS
-  const SQUARE_ACCESS_TOKEN = 'YOUR_PRODUCTION_ACCESS_TOKEN'
-  const SQUARE_LOCATION_ID = 'YOUR_PRODUCTION_LOCATION_ID'
+  const SQUARE_ACCESS_TOKEN = 'EAAAlwtO92oO9OtP9eWf3eCFdAGfCOXw2IJ3GkYY8dQ0tlusllELwhLxcM0Ge9EL'
+  const SQUARE_LOCATION_ID = '49XKD9QT7ANEC'
   const SQUARE_ENVIRONMENT = 'production'
   
   const baseUrl = SQUARE_ENVIRONMENT === 'sandbox' 
