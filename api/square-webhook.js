@@ -1,6 +1,6 @@
-// Vercel Serverless Function - Fixed CORS
+// Vercel Serverless Function - Square Invoice Creation
 export default async function handler(req, res) {
-  // Set CORS headers for ALL requests
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     return res.status(200).end()
   }
   
-  // Only allow POST for actual requests
+  // Only allow POST
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' })
   }
@@ -22,11 +22,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing required data' })
   }
 
-  // Square Configuration
+  // Square Configuration - UPDATE THESE WITH YOUR PRODUCTION VALUES
   const SQUARE_ACCESS_TOKEN = 'EAAAlwtO92oO9OtP9eWf3eCFdAGfCOXw2IJ3GkYY8dQ0tlusllELwhLxcM0Ge9EL'
   const SQUARE_LOCATION_ID = '49XKD9QT7ANEC'
   const SQUARE_ENVIRONMENT = 'production'
-  
   const baseUrl = SQUARE_ENVIRONMENT === 'sandbox' 
     ? 'https://connect.squareupsandbox.com' 
     : 'https://connect.squareup.com'
@@ -35,7 +34,6 @@ export default async function handler(req, res) {
     // 1. Get or Create Customer
     let customerId = null
     
-    // Search for customer
     const searchResponse = await fetch(`${baseUrl}/v2/customers/search`, {
       method: 'POST',
       headers: {
@@ -87,18 +85,98 @@ export default async function handler(req, res) {
       }
     }
 
-    // 2. Create Order
-    const lineItems = orderData.items.map(item => ({
-      name: item.product.charAt(0).toUpperCase() + item.product.slice(1) + ' - ' + item.fragrance,
+    // 2. Create Invoice
+    const lineItems = orderData.items.map((item, index) => ({
+      uid: `item-${index}`,
+      name: `${item.product.charAt(0).toUpperCase() + item.product.slice(1)} - ${item.fragrance} (${item.size})`,
       quantity: String(item.quantity),
+      item_type: 'ITEM',
       base_price_money: {
         amount: Math.round(item.unitPrice * 100),
         currency: 'GBP'
-      },
-      note: 'Size: ' + item.size
+      }
     }))
 
-    const orderResponse = await fetch(`${baseUrl}/v2/orders`, {
+    // Determine invoice title based on action type
+    const invoiceTitle = action === 'quote' 
+      ? `Wholesale Quote - ${orderData.id}` 
+      : `Wholesale Order - ${orderData.id}`
+
+    // Create invoice payload
+    const invoicePayload = {
+      idempotency_key: `inv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      invoice: {
+        location_id: SQUARE_LOCATION_ID,
+        customer_id: customerId,
+        primary_recipient: {
+          customer_id: customerId
+        },
+        payment_requests: [
+          {
+            request_type: 'BALANCE',
+            due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 14 days from now
+            automatic_payment_source: 'NONE'
+          }
+        ],
+        delivery_method: 'EMAIL',
+        invoice_number: orderData.id,
+        title: invoiceTitle,
+        description: `Thank you for your wholesale ${action === 'quote' ? 'quote request' : 'order'}. Please review the items below.\n\nCompany: ${customerInfo.companyName}\nContact: ${customerInfo.contactName}`,
+        scheduled_at: new Date().toISOString(),
+        accepted_payment_methods: {
+          card: true,
+          square_gift_card: false,
+          bank_account: false,
+          buy_now_pay_later: false,
+          cash_app_pay: false
+        },
+        custom_fields: [
+          {
+            label: 'Reference',
+            value: orderData.id
+          },
+          {
+            label: 'Order Type',
+            value: action === 'quote' ? 'Quote' : 'Order'
+          }
+        ]
+      },
+      fields_to_clear: []
+    }
+
+    // Add line items to order
+    invoicePayload.invoice.order = {
+      location_id: SQUARE_LOCATION_ID,
+      customer_id: customerId,
+      line_items: lineItems,
+      metadata: {
+        order_type: action,
+        reference_id: orderData.id,
+        company_name: customerInfo.companyName
+      }
+    }
+
+    // Create the invoice
+    const invoiceResponse = await fetch(`${baseUrl}/v2/invoices`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Square-Version': '2024-12-18'
+      },
+      body: JSON.stringify(invoicePayload)
+    })
+
+    if (!invoiceResponse.ok) {
+      const errorData = await invoiceResponse.json()
+      throw new Error(`Square Invoice API error: ${JSON.stringify(errorData)}`)
+    }
+
+    const invoiceResult = await invoiceResponse.json()
+    const invoiceId = invoiceResult.invoice.id
+
+    // 3. Publish the invoice (this triggers Square to send the email)
+    const publishResponse = await fetch(`${baseUrl}/v2/invoices/${invoiceId}/publish`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${SQUARE_ACCESS_TOKEN}`,
@@ -106,44 +184,31 @@ export default async function handler(req, res) {
         'Square-Version': '2024-12-18'
       },
       body: JSON.stringify({
-        idempotency_key: 'wlc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-        order: {
-          location_id: SQUARE_LOCATION_ID,
-          customer_id: customerId,
-          line_items: lineItems,
-          state: 'OPEN',
-          metadata: {
-            order_type: action,
-            reference_id: orderData.id,
-            company_name: orderData.customer.companyName
-          }
-        }
+        version: invoiceResult.invoice.version,
+        idempotency_key: `pub_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       })
     })
 
-    if (!orderResponse.ok) {
-      const errorData = await orderResponse.json()
-      throw new Error('Square API error: ' + JSON.stringify(errorData))
+    if (!publishResponse.ok) {
+      const errorData = await publishResponse.json()
+      console.error('Failed to publish invoice:', errorData)
+      // Don't throw - invoice was created, just not published
     }
 
-    const orderResult = await orderResponse.json()
-    const squareOrderId = orderResult.order.id
-
-    // Log email info
-    console.log('===== ORDER CREATED =====')
-    console.log('To: contact@whitelabelcandles.co.uk')
-    console.log('CC:', customerInfo.email)
-    console.log('Quote ID:', orderData.id)
-    console.log('Square ID:', squareOrderId)
+    console.log('===== INVOICE CREATED =====')
+    console.log('Invoice ID:', invoiceId)
     console.log('Customer:', customerInfo.companyName)
     console.log('Total: £' + orderData.total.toFixed(2))
-    console.log('========================')
+    console.log('Square will email customer and you')
+    console.log('==========================')
 
     return res.status(200).json({
       success: true,
-      squareOrderId: squareOrderId,
+      invoiceId: invoiceId,
       customerId: customerId,
-      message: action === 'quote' ? 'Quote generated successfully' : 'Order created successfully'
+      message: action === 'quote' 
+        ? 'Quote invoice sent! Customer and you will receive email from Square.' 
+        : 'Order invoice sent! Customer and you will receive email from Square.'
     })
 
   } catch (error) {
