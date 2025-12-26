@@ -175,14 +175,7 @@ Please review the items and proceed with payment when ready.`
           bank_account: false,
           buy_now_pay_later: false,
           cash_app_pay: false
-        },
-        custom_fields: [
-          {
-            label: 'Order Type',
-            value: action === 'quote' ? 'Quote' : 'Order',
-            placement: 'ABOVE_LINE_ITEMS'
-          }
-        ]
+        }
       }
     }
 
