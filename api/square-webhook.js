@@ -1,17 +1,18 @@
-// Vercel Serverless Function - Square Invoice Creation (FIXED)
+// Vercel Serverless Function - Square Invoice Creation
+// PRODUCTION READY - Uses environment variables from Vercel
 export default async function handler(req, res) {
-  // Set CORS headers
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept')
   res.setHeader('Access-Control-Max-Age', '86400')
   
-  // Handle OPTIONS preflight
+  // Handle preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).end()
   }
   
-  // Only allow POST
+  // Only POST allowed
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' })
   }
@@ -22,17 +23,26 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Missing required data' })
   }
 
-  // Square Configuration - UPDATE WITH YOUR PRODUCTION CREDENTIALS
-  const SQUARE_ACCESS_TOKEN = 'EAAAlwtO92oO9OtP9eWf3eCFdAGfCOXw2IJ3GkYY8dQ0tlusllELwhLxcM0Ge9EL'
-  const SQUARE_LOCATION_ID = '49XKD9QT7ANEC'
-  const SQUARE_ENVIRONMENT = 'production'
+  // Get credentials from Vercel environment variables
+  const SQUARE_ACCESS_TOKEN = process.env.SQUARE_ACCESS_TOKEN
+  const SQUARE_LOCATION_ID = process.env.SQUARE_LOCATION_ID
+  const SQUARE_ENVIRONMENT = process.env.SQUARE_ENVIRONMENT || 'production'
+  
+  // Validate credentials exist
+  if (!SQUARE_ACCESS_TOKEN || !SQUARE_LOCATION_ID) {
+    console.error('Missing Square credentials in environment variables')
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Server configuration error - missing Square credentials' 
+    })
+  }
   
   const baseUrl = SQUARE_ENVIRONMENT === 'sandbox' 
     ? 'https://connect.squareupsandbox.com' 
     : 'https://connect.squareup.com'
 
   try {
-    // 1. Get or Create Customer
+    // ===== STEP 1: Get or Create Customer =====
     let customerId = null
     
     const searchResponse = await fetch(`${baseUrl}/v2/customers/search`, {
@@ -57,11 +67,13 @@ export default async function handler(req, res) {
       const searchResult = await searchResponse.json()
       if (searchResult.customers && searchResult.customers.length > 0) {
         customerId = searchResult.customers[0].id
+        console.log('Found existing customer:', customerId)
       }
     }
 
     // Create customer if not found
     if (!customerId) {
+      console.log('Creating new customer...')
       const createResponse = await fetch(`${baseUrl}/v2/customers`, {
         method: 'POST',
         headers: {
@@ -80,13 +92,16 @@ export default async function handler(req, res) {
       if (createResponse.ok) {
         const createResult = await createResponse.json()
         customerId = createResult.customer.id
+        console.log('Created new customer:', customerId)
       } else {
         const errorText = await createResponse.text()
+        console.error('Customer creation failed:', errorText)
         throw new Error('Failed to create customer: ' + errorText)
       }
     }
 
-    // 2. Create Order First (required for invoice)
+    // ===== STEP 2: Create Order =====
+    console.log('Creating order...')
     const lineItems = orderData.items.map((item, index) => ({
       uid: `item-${index}-${Date.now()}`,
       name: `${item.product.charAt(0).toUpperCase() + item.product.slice(1)} - ${item.fragrance} (${item.size})`,
@@ -119,13 +134,16 @@ export default async function handler(req, res) {
 
     if (!orderResponse.ok) {
       const errorData = await orderResponse.json()
+      console.error('Order creation failed:', errorData)
       throw new Error(`Square Order API error: ${JSON.stringify(errorData)}`)
     }
 
     const orderResult = await orderResponse.json()
     const orderId = orderResult.order.id
+    console.log('Order created:', orderId)
 
-    // 3. Create Invoice from Order
+    // ===== STEP 3: Create Invoice =====
+    console.log('Creating invoice...')
     const dueDate = new Date()
     dueDate.setDate(dueDate.getDate() + 14)
     const dueDateString = dueDate.toISOString().split('T')[0]
@@ -170,7 +188,8 @@ Please review the items and proceed with payment when ready.`
         custom_fields: [
           {
             label: 'Order Type',
-            value: action === 'quote' ? 'Quote' : 'Order'
+            value: action === 'quote' ? 'Quote' : 'Order',
+            placement: 'ABOVE_LINE_ITEMS'
           }
         ]
       }
@@ -188,14 +207,17 @@ Please review the items and proceed with payment when ready.`
 
     if (!invoiceResponse.ok) {
       const errorData = await invoiceResponse.json()
+      console.error('Invoice creation failed:', errorData)
       throw new Error(`Square Invoice API error: ${JSON.stringify(errorData)}`)
     }
 
     const invoiceResult = await invoiceResponse.json()
     const invoiceId = invoiceResult.invoice.id
     const invoiceVersion = invoiceResult.invoice.version
+    console.log('Invoice created:', invoiceId)
 
-    // 4. Publish the invoice
+    // ===== STEP 4: Publish Invoice =====
+    console.log('Publishing invoice...')
     const publishResponse = await fetch(`${baseUrl}/v2/invoices/${invoiceId}/publish`, {
       method: 'POST',
       headers: {
@@ -210,30 +232,39 @@ Please review the items and proceed with payment when ready.`
     })
 
     if (publishResponse.ok) {
-      console.log('Invoice published and emailed successfully')
+      console.log('✅ Invoice published successfully')
+      console.log('📧 Square will email:', customerInfo.email)
     } else {
       const errorData = await publishResponse.json()
-      console.error('Failed to publish invoice:', errorData)
+      console.error('⚠️ Publish failed (invoice still created):', errorData)
     }
 
-    console.log('===== INVOICE CREATED =====')
+    // ===== SUCCESS =====
+    console.log('========== SUCCESS ==========')
     console.log('Order ID:', orderId)
     console.log('Invoice ID:', invoiceId)
     console.log('Customer:', customerInfo.companyName)
     console.log('Email:', customerInfo.email)
     console.log('Total: £' + orderData.total.toFixed(2))
-    console.log('==========================')
+    console.log('Type:', action === 'quote' ? 'Quote' : 'Order')
+    console.log('============================')
 
     return res.status(200).json({
       success: true,
       invoiceId: invoiceId,
       orderId: orderId,
       customerId: customerId,
-      message: 'Invoice sent! Square will email the customer with payment details.'
+      message: action === 'quote'
+        ? 'Quote invoice sent! Square will email you shortly with the details.'
+        : 'Order invoice sent! Square will email you with a secure payment link.'
     })
 
   } catch (error) {
-    console.error('Error:', error)
+    console.error('========== ERROR ==========')
+    console.error('Error:', error.message)
+    console.error('Stack:', error.stack)
+    console.error('===========================')
+    
     return res.status(500).json({
       success: false,
       error: error.message
